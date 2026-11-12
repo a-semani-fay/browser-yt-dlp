@@ -9,7 +9,7 @@ is plain files that any static host can serve.
 | Python | CPython | [Pyodide](https://pyodide.org) (CPython compiled to WebAssembly) running the unmodified yt-dlp wheel |
 | ffmpeg / ffprobe | native binaries | [ffmpeg.wasm](https://ffmpegwasm.netlify.app) core, called synchronously in the same worker |
 | A JS runtime for YouTube (deno) | `deno` subprocess | the browser's own JS engine runs the same `yt-dlp-ejs` solver scripts |
-| Sockets | urllib / requests | synchronous `XMLHttpRequest`, optionally through a CORS proxy |
+| Sockets | urllib / requests | synchronous `XMLHttpRequest`, carried out by a companion browser extension or a CORS proxy |
 
 Deno itself is not compiled to WebAssembly: its only job for yt-dlp is to execute JavaScript,
 and a browser already is a JavaScript runtime.
@@ -32,32 +32,64 @@ Open <http://localhost:8000/>. The dev server serves `dist/` and a same-origin C
 the latest release from PyPI together with the `yt-dlp-ejs` version that release requires.
 `npm test` runs the Python shim against the real yt-dlp under Pyodide in Node.
 
-## The CORS proxy (read this before deploying)
+## Getting past CORS (read this before deploying)
 
 The site is static, but one thing cannot be done from a static page: browsers do not let a
 page read responses from another site unless that site opts in, and YouTube and almost every
 other video site do not. Scripts also cannot set headers such as `User-Agent`, `Cookie` or
-`Referer`. There is no client-side way around either restriction.
+`Referer`.
 
-So requests go through a small relay, `proxy/worker.mjs`. It holds no logic about any video
-site; it forwards a request with the headers yt-dlp asked for and adds CORS headers to the
-reply. Deploy it as a Cloudflare Worker:
+This cannot be solved with more WebAssembly. WASM has no network access of its own; every
+request it makes leaves through the browser's `fetch`/XHR, which is where the restriction is
+enforced. A proxy compiled to WASM would be blocked exactly like the page. Something outside
+the page has to make the requests, and there are two choices, selectable under **Settings →
+Network access**.
+
+### Option 1: companion extension (everything stays on the client)
+
+Browser extensions are exempt from CORS for the hosts they are granted. `extension/` is a
+small extension that makes the requests from the visitor's own browser, so no server is
+involved and sites see the visitor's own IP address.
+
+1. Open `chrome://extensions`, switch on **Developer mode**, choose **Load unpacked** and
+   select the `extension/` folder.
+2. Open the site and click the extension's toolbar button to enable it for that site (the
+   badge shows **ON**). `http://localhost:8000` is enabled by default.
+3. Reload the page. Settings should say "Extension connected".
+
+The extension holds no yt-dlp logic and only serves origins you have enabled, because a
+page it serves can make requests to any site, including ones on your local network. It asks
+for access to all sites since yt-dlp supports thousands of them. It has been tested in
+Chromium; Chrome and Edge should behave the same, Firefox is untested.
+
+How a request travels: yt-dlp (blocking, in a worker) → synchronous XHR to
+`<site>/__bridge/fetch` → the site's service worker (`sw.js`) holds that request open → page →
+extension content script → extension background worker, which performs the real request and
+sends the answer back along the same path. The service worker is what lets blocking Python
+wait for an asynchronous extension without `SharedArrayBuffer`.
+
+### Option 2: CORS proxy (nothing to install, needs a server)
+
+`proxy/worker.mjs` is a small relay. It holds no logic about any video site; it forwards a
+request with the headers yt-dlp asked for and adds CORS headers to the reply. Deploy it as a
+Cloudflare Worker:
 
 ```bash
 cd proxy && npx wrangler deploy
 ```
 
 Set `ALLOWED_ORIGINS` in `proxy/wrangler.toml` to your site's origin so the relay is not open
-to everyone, then paste the worker URL into **Settings → CORS proxy** on the page (it is
-remembered in `localStorage`). Leaving the field empty makes the page talk to sites directly,
-which only works for sites that send CORS headers. A third-party proxy can be used with a
-`{url}` placeholder, e.g. `https://proxy.example/?url={url}`, but it will not forward request
-headers or cookies, which many extractors need.
+to everyone, then choose **CORS proxy** in Settings and paste the worker URL (it is remembered
+in `localStorage`). A third-party proxy can be used with a `{url}` placeholder, e.g.
+`https://proxy.example/?url={url}`, but it will not forward request headers or cookies, which
+many extractors need.
 
 All traffic, including the media itself, passes through the relay, so its bandwidth limits and
 its IP address reputation apply. Sites that block datacenter IPs (YouTube frequently does, with
-"Sign in to confirm you're not a bot") will block a hosted relay too; the local dev server
-relays from your own connection instead.
+"Sign in to confirm you're not a bot") will block a hosted relay too. The local dev server
+includes this relay at `/proxy` and uses your own connection.
+
+**Direct** mode uses neither and only works for sites that send CORS headers themselves.
 
 ## Deploying the site
 
@@ -72,6 +104,8 @@ releases); enable it under **Settings → Pages → Source: GitHub Actions**. No
 index.html / app.js          UI; talks to the worker with postMessage
 worker.js                    loads Pyodide + ffmpeg.wasm, exposes a "bridge" to Python
 py/browser_ytdlp.py          registers the browser backends with yt-dlp
+sw.js                        holds the worker's blocking requests open for the extension
+extension/                   companion extension that makes the cross-origin requests
 proxy/worker.mjs             CORS relay (Cloudflare Worker, also used by the dev server)
 ```
 
@@ -80,7 +114,7 @@ in a Web Worker where blocking is allowed, and `py/browser_ytdlp.py` plugs into 
 extension points rather than patching its source:
 
 - **Network** – `BrowserRH`, a yt-dlp `RequestHandler`, sends each request as a synchronous
-  XHR. Redirects and cookies are handled in Python so cookies apply to every hop. Because a
+  XHR to the extension bridge or the proxy, which speak the same protocol. Redirects and cookies are handled in Python so cookies apply to every hop. Because a
   synchronous XHR returns its body in one piece, plain GETs are transparently fetched in 10 MB
   ranges as the caller reads, and downloads use `http_chunk_size`.
 - **ffmpeg** – `Popen.run` is intercepted. `ffmpeg` and `ffprobe` commands are executed by
@@ -98,16 +132,19 @@ extension points rather than patching its source:
 - **Speed.** ffmpeg.wasm is single-threaded. Merging (`-c copy`) is fast; re-encoding video is
   slow. Converting audio to MP3 is fine.
 - **No sandbox around the challenge solver.** Deno runs the solver with no permissions; here it
-  runs in the page's worker. Use a proxy you trust, since the proxy can alter the player script
-  that the solver evaluates.
+  runs in the page's worker. If you use a proxy, use one you trust, since it can alter the
+  player script that the solver evaluates.
+- **Extension mode moves media through message passing**, 10 MB at a time, which is slower
+  than a direct connection.
 - **Not available:** browser cookie import (`--cookies-from-browser`), external downloaders,
   impersonation (`curl_cffi`), websockets-based extractors, and concat-list ffmpeg operations.
 - **Cancelling** terminates the worker and starts a new one, which takes a few seconds.
 
 ## Status
 
-Verified in headless Chromium against a local test site: direct downloads (with redirects and
-cookies), DASH video + audio merged by ffmpeg.wasm, and audio conversion to MP3. The YouTube
+Verified in Chromium against a local test site, once through the companion extension and once
+through the proxy: direct downloads (with redirects and cookies), DASH video + audio merged by
+ffmpeg.wasm, and audio conversion to MP3. The YouTube
 challenge path is verified up to the point where the real `yt-dlp-ejs` solver runs in the
 browser engine; a full YouTube download has not been tested, because the environment this was
 built in cannot reach YouTube.

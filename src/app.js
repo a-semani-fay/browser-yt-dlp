@@ -11,6 +11,9 @@ const els = {
   customWrap: $('custom-wrap'),
   custom: $('custom'),
   proxy: $('proxy'),
+  mode: $('mode'),
+  proxyWrap: $('proxy-wrap'),
+  extStatus: $('ext-status'),
   verbose: $('verbose'),
   info: $('info'),
   thumb: $('thumb'),
@@ -51,7 +54,75 @@ const store = {
 const isLocal = ['localhost', '127.0.0.1'].includes(location.hostname);
 els.proxy.value = store.get('proxy') ?? (isLocal ? `${location.origin}/proxy` : '');
 els.proxy.addEventListener('change', () => store.set('proxy', els.proxy.value.trim()));
-if (!els.proxy.value) $('settings').open = true;
+
+// ------------------------------------------------------ companion extension
+
+// The extension's content script answers these; nobody answers if it is absent.
+let extSeq = 0;
+const extWaiting = new Map();
+
+window.addEventListener('message', (event) => {
+  if (event.source !== window || event.data?.source !== 'browser-yt-dlp-extension') return;
+  extWaiting.get(event.data.id)?.(event.data);
+  extWaiting.delete(event.data.id);
+});
+
+function askExtension(type, request, timeoutMs) {
+  return new Promise((resolve) => {
+    const id = ++extSeq;
+    extWaiting.set(id, resolve);
+    window.postMessage({ source: 'browser-yt-dlp-page', id, type, request }, location.origin);
+    setTimeout(() => {
+      if (extWaiting.delete(id)) resolve(null);
+    }, timeoutMs);
+  });
+}
+
+// sw.js parks the worker's blocking request here while the extension works on it
+navigator.serviceWorker?.addEventListener('message', async (event) => {
+  if (event.data?.type !== 'bridge-fetch') return;
+  const reply = (await askExtension('fetch', event.data.request, 180_000)) ?? {
+    error: 'The companion extension did not answer',
+  };
+  event.ports[0].postMessage(reply, reply.body ? [reply.body] : []);
+});
+
+const bridgeUrl = new URL('./__bridge/fetch', location.href).href;
+let extension = null;
+
+async function refreshExtension() {
+  extension = await askExtension('ping', undefined, 400);
+  els.proxyWrap.hidden = els.mode.value !== 'proxy';
+  els.extStatus.hidden = els.mode.value !== 'extension';
+  if (!navigator.serviceWorker) {
+    els.extStatus.textContent = 'This browser or context has no service workers, which extension mode needs.';
+  } else if (!extension) {
+    els.extStatus.textContent =
+      'Extension not detected. Load the extension/ folder from the repository as an unpacked extension, then reload this page.';
+  } else if (!extension.allowed) {
+    els.extStatus.textContent =
+      'Extension found, but this site is not enabled. Click the extension\'s toolbar button on this tab.';
+  } else {
+    els.extStatus.textContent = `Extension ${extension.version} connected. Requests are made by your own browser.`;
+  }
+  return extension;
+}
+
+els.mode.addEventListener('change', () => {
+  store.set('mode', els.mode.value);
+  refreshExtension();
+});
+window.addEventListener('focus', refreshExtension);
+
+async function initNetworkMode() {
+  await refreshExtension();
+  const usable = extension?.allowed && navigator.serviceWorker;
+  els.mode.value = store.get('mode') ?? (usable || !els.proxy.value ? 'extension' : 'proxy');
+  await refreshExtension();
+  if (els.mode.value === 'extension' ? !usable : els.mode.value === 'proxy' && !els.proxy.value) {
+    $('settings').open = true;
+  }
+}
 
 els.preset.addEventListener('change', () => {
   els.customWrap.hidden = els.preset.value !== 'custom';
@@ -185,7 +256,8 @@ function showProgress(p) {
 }
 
 function baseOptions() {
-  return { cors_proxy: els.proxy.value.trim(), verbose: els.verbose.checked };
+  const proxies = { extension: bridgeUrl, proxy: els.proxy.value.trim(), direct: '' };
+  return { cors_proxy: proxies[els.mode.value], verbose: els.verbose.checked };
 }
 
 function downloadOptions() {
@@ -203,6 +275,11 @@ function downloadOptions() {
 }
 
 async function run(label, task) {
+  if (els.mode.value === 'extension' && !(await refreshExtension())?.allowed) {
+    $('settings').open = true;
+    log(`ERROR: ${els.extStatus.textContent}`, 'error');
+    return { ok: false };
+  }
   busy = true;
   refreshButtons();
   els.progress.hidden = false;
@@ -210,7 +287,7 @@ async function run(label, task) {
   els.bar.removeAttribute('value');
   try {
     const result = await task();
-    if (!result.ok) log(`ERROR: ${result.error}`, 'error');
+    if (!result.ok && result.error) log(`ERROR: ${result.error}`, 'error');
     return result;
   } finally {
     busy = false;
@@ -294,7 +371,49 @@ els.cancelBtn.addEventListener('click', () => {
   worker.terminate();
   for (const resolve of pending.values()) resolve({ ok: false, error: 'Cancelled' });
   pending.clear();
+  async function start() {
+  // The worker's requests only pass through sw.js if the page was already
+  // controlled when the worker was created.
+  if (navigator.serviceWorker) {
+    try {
+      await navigator.serviceWorker.register('./sw.js');
+      await navigator.serviceWorker.ready;
+      if (!navigator.serviceWorker.controller) {
+        await new Promise((resolve) => {
+          navigator.serviceWorker.addEventListener('controllerchange', resolve, { once: true });
+          setTimeout(resolve, 3000);
+        });
+      }
+    } catch (err) {
+      log(`Service worker unavailable (${err.message}); extension mode will not work.`, 'warning');
+    }
+  }
+  await initNetworkMode();
   startWorker();
+}
+
+start();
 });
 
-startWorker();
+async function start() {
+  // The worker's requests only pass through sw.js if the page was already
+  // controlled when the worker was created.
+  if (navigator.serviceWorker) {
+    try {
+      await navigator.serviceWorker.register('./sw.js');
+      await navigator.serviceWorker.ready;
+      if (!navigator.serviceWorker.controller) {
+        await new Promise((resolve) => {
+          navigator.serviceWorker.addEventListener('controllerchange', resolve, { once: true });
+          setTimeout(resolve, 3000);
+        });
+      }
+    } catch (err) {
+      log(`Service worker unavailable (${err.message}); extension mode will not work.`, 'warning');
+    }
+  }
+  await initNetworkMode();
+  startWorker();
+}
+
+start();

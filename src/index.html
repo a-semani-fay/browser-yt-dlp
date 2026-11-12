@@ -48,14 +48,23 @@
 
         <details id="settings">
           <summary>Settings</summary>
-          <label for="proxy">CORS proxy</label>
-          <input id="proxy" type="text" placeholder="https://your-proxy.example.workers.dev/" spellcheck="false" />
+          <label for="mode">Network access</label>
+          <select id="mode">
+            <option value="extension">Companion browser extension (no server)</option>
+            <option value="proxy">CORS proxy</option>
+            <option value="direct">Direct (only sites that allow cross-origin requests)</option>
+          </select>
           <p class="hint">
             Browsers refuse to let a page read other sites unless those sites allow it, and almost no
-            video site does. Requests are therefore relayed through this URL. Deploy your own from
-            <code>proxy/worker.mjs</code>; leave it empty to talk to sites directly (only works for
-            sites that send CORS headers).
+            video site does. Something outside the page has to make the requests: either the companion
+            extension in your own browser, or a relay server.
           </p>
+          <p id="ext-status" class="hint"></p>
+          <div id="proxy-wrap" hidden>
+            <label for="proxy">CORS proxy URL</label>
+            <input id="proxy" type="text" placeholder="https://your-proxy.example.workers.dev/" spellcheck="false" />
+            <p class="hint">Deploy your own from <code>proxy/worker.mjs</code>.</p>
+          </div>
           <label class="check"><input id="verbose" type="checkbox" /> Verbose log (<code>-v</code>)</label>
         </details>
       </form>

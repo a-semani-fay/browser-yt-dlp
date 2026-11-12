@@ -48,6 +48,8 @@ const bridge = {
     }
     xhr.send(body ?? null);
     if (xhr.status === 0) throw new Error('network error');
+    // Raised by sw.js when the companion extension could not be reached
+    if (xhr.getResponseHeader('x-bridge-error')) throw new Error(new TextDecoder().decode(xhr.response));
 
     const headers = [];
     for (const line of xhr.getAllResponseHeaders().trim().split(/[\r\n]+/)) {
