@@ -2,6 +2,8 @@
 // It does nothing until a page speaks first, and the background worker only
 // answers origins the user has enabled.
 
+const api = globalThis.browser ?? chrome;
+
 function toBase64(buffer) {
   const bytes = new Uint8Array(buffer);
   let binary = '';
@@ -25,7 +27,7 @@ window.addEventListener('message', async (event) => {
   try {
     const message = { type };
     if (request) message.request = { ...request, body: request.body ? toBase64(request.body) : null };
-    reply = (await chrome.runtime.sendMessage(message)) ?? { error: 'No answer from the extension' };
+    reply = (await api.runtime.sendMessage(message)) ?? { error: 'No answer from the extension' };
     if (reply.bodyB64 !== undefined) {
       reply.body = fromBase64(reply.bodyB64);
       delete reply.bodyB64;
@@ -34,9 +36,7 @@ window.addEventListener('message', async (event) => {
     // Typically "Extension context invalidated" after the extension was reloaded
     reply = { error: `${err?.message ?? err} (try reloading the page)` };
   }
-  window.postMessage(
-    { source: 'browser-yt-dlp-extension', id, ...reply },
-    location.origin,
-    reply.body ? [reply.body] : [],
-  );
+  // Copied rather than transferred: Firefox does not let a content script hand
+  // ownership of its buffers to the page.
+  window.postMessage({ source: 'browser-yt-dlp-extension', id, ...reply }, location.origin);
 });

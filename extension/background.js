@@ -5,35 +5,82 @@
 // uses the same x-proxy-* convention, so the page cannot tell the difference.
 //
 // Only origins the user has switched on (toolbar button) are served.
+//
+// The same file runs in Chromium and Firefox. They differ in one place: how
+// headers that fetch() refuses to set (Cookie, Referer, ...) get onto the
+// request. Chromium only offers declarativeNetRequest rules for that; Firefox
+// still has blocking webRequest, which is what manifest.firefox.json asks for.
 
 const DEFAULT_ORIGINS = ['http://localhost:8000', 'http://127.0.0.1:8000'];
 const RULE_ID = 1;
-const SELF = `chrome-extension://${chrome.runtime.id}`;
+const api = globalThis.browser ?? chrome;
+// chrome-extension://<id> or moz-extension://<per-install uuid>
+const SELF = new URL(api.runtime.getURL('')).origin;
+const SELF_HOST = new URL(SELF).hostname;
+const USE_RULES = Boolean(api.declarativeNetRequest);
 
-// Headers fetch() refuses to set. They are applied with a short-lived
-// declarativeNetRequest rule instead.
+// Headers fetch() refuses to set; see applyHeaders().
 const VIA_RULE = /^(cookie|origin|referer|user-agent|sec-.*|dnt)$/;
 const NEVER = /^(host|connection|content-length|accept-encoding|transfer-encoding|keep-alive|upgrade|te|trailer|via|expect|date|proxy-.*|access-control-.*)$/;
 const DROP_RESPONSE = /^(set-cookie|location|connection|keep-alive|transfer-encoding|access-control-.*)$/;
 
 async function allowedOrigins() {
-  const { origins } = await chrome.storage.local.get('origins');
+  const { origins } = await api.storage.local.get('origins');
   return origins ?? DEFAULT_ORIGINS;
 }
 
 // fetch() hides Set-Cookie and the target of an unfollowed redirect; the
 // webRequest observer sees both.
 let observed = null;
-chrome.webRequest.onHeadersReceived.addListener(
+// Chromium reports who made a request as `initiator`, Firefox as `originUrl`
+const isOurs = (details) => (details.initiator ?? details.originUrl ?? details.documentUrl ?? '').startsWith(SELF);
+
+api.webRequest.onHeadersReceived.addListener(
   (details) => {
-    if (observed && details.initiator === SELF) {
+    if (observed && isOurs(details)) {
       observed.status = details.statusCode;
       observed.headers = details.responseHeaders ?? [];
     }
   },
   { urls: ['<all_urls>'], tabId: -1 },
-  ['responseHeaders', 'extraHeaders'],
+  // Chromium hides Set-Cookie without 'extraHeaders'; Firefox rejects the word
+  USE_RULES ? ['responseHeaders', 'extraHeaders'] : ['responseHeaders'],
 );
+
+// Firefox: rewrite our own outgoing request in place
+let overrides = null;
+if (!USE_RULES) {
+  api.webRequest.onBeforeSendHeaders.addListener(
+    (details) => {
+      if (!overrides || !isOurs(details)) return {};
+      const changed = new Set(overrides.map((o) => o.header));
+      const requestHeaders = details.requestHeaders.filter((h) => !changed.has(h.name.toLowerCase()));
+      for (const { header, operation, value } of overrides) {
+        if (operation === 'set') requestHeaders.push({ name: header, value });
+      }
+      return { requestHeaders };
+    },
+    { urls: ['<all_urls>'], tabId: -1 },
+    ['blocking', 'requestHeaders'],
+  );
+}
+
+// `changes` is a list of {header, operation: 'set' | 'remove', value}; null clears it
+async function applyHeaders(changes) {
+  if (!USE_RULES) {
+    overrides = changes;
+    return;
+  }
+  await api.declarativeNetRequest.updateSessionRules({
+    removeRuleIds: [RULE_ID],
+    addRules: changes && [{
+      id: RULE_ID,
+      priority: 1,
+      action: { type: 'modifyHeaders', requestHeaders: changes },
+      condition: { initiatorDomains: [SELF_HOST], tabIds: [-1], resourceTypes: ['xmlhttprequest', 'other'] },
+    }],
+  });
+}
 
 function toBase64(bytes) {
   if (bytes.toBase64) return bytes.toBase64();
@@ -71,15 +118,7 @@ async function relay({ url, method, headers, body }) {
   // Otherwise the request would announce "Origin: chrome-extension://..."
   if (!hasOrigin) viaRule.push({ header: 'origin', operation: 'remove' });
 
-  await chrome.declarativeNetRequest.updateSessionRules({
-    removeRuleIds: [RULE_ID],
-    addRules: [{
-      id: RULE_ID,
-      priority: 1,
-      action: { type: 'modifyHeaders', requestHeaders: viaRule },
-      condition: { initiatorDomains: [chrome.runtime.id], tabIds: [-1], resourceTypes: ['xmlhttprequest', 'other'] },
-    }],
-  });
+  await applyHeaders(viaRule);
 
   observed = {};
   try {
@@ -95,7 +134,9 @@ async function relay({ url, method, headers, body }) {
 
     const status = observed.status ?? response.status;
     const raw = observed.headers ?? [...response.headers].map(([name, value]) => ({ name, value }));
-    const find = (wanted) => raw.filter((h) => h.name.toLowerCase() === wanted).map((h) => h.value ?? '');
+    // Firefox folds repeated headers such as Set-Cookie into one, separated by newlines
+    const find = (wanted) =>
+      raw.filter((h) => h.name.toLowerCase() === wanted).flatMap((h) => (h.value ?? '').split('\n'));
     // fetch() already decoded the body
     const decoded = find('content-encoding').length > 0;
 
@@ -118,7 +159,7 @@ async function relay({ url, method, headers, body }) {
     return { status, headers: out, bodyB64: toBase64(bytes) };
   } finally {
     observed = null;
-    await chrome.declarativeNetRequest.updateSessionRules({ removeRuleIds: [RULE_ID] });
+    await applyHeaders(null);
   }
 }
 
@@ -130,11 +171,11 @@ const enqueue = (task) => {
   return run;
 };
 
-chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+api.runtime.onMessage.addListener((message, sender, sendResponse) => {
   (async () => {
     const origin = sender.origin ?? new URL(sender.url).origin;
     const allowed = (await allowedOrigins()).includes(origin);
-    if (message.type === 'ping') return { installed: true, allowed, version: chrome.runtime.getManifest().version };
+    if (message.type === 'ping') return { installed: true, allowed, version: api.runtime.getManifest().version };
     if (!allowed) return { error: 'This site is not enabled in the browser-yt-dlp extension. Click its toolbar button.' };
     if (message.type === 'fetch') return enqueue(() => relay(message.request));
     return { error: `Unknown request: ${message.type}` };
@@ -151,19 +192,19 @@ async function showState(tabId, url) {
   } catch {
     // not a web page
   }
-  await chrome.action.setBadgeText({ tabId, text: on ? 'ON' : '' });
-  await chrome.action.setBadgeBackgroundColor({ tabId, color: '#1a7f4b' });
+  await api.action.setBadgeText({ tabId, text: on ? 'ON' : '' });
+  await api.action.setBadgeBackgroundColor({ tabId, color: '#1a7f4b' });
 }
 
-chrome.action.onClicked.addListener(async (tab) => {
+api.action.onClicked.addListener(async (tab) => {
   if (!tab.url || !/^https?:/.test(tab.url)) return;
   const origin = new URL(tab.url).origin;
   const origins = await allowedOrigins();
   const next = origins.includes(origin) ? origins.filter((o) => o !== origin) : [...origins, origin];
-  await chrome.storage.local.set({ origins: next });
+  await api.storage.local.set({ origins: next });
   await showState(tab.id, tab.url);
 });
 
-chrome.tabs.onUpdated.addListener((tabId, change, tab) => {
+api.tabs.onUpdated.addListener((tabId, change, tab) => {
   if (change.status === 'complete' && tab.url) showState(tabId, tab.url);
 });

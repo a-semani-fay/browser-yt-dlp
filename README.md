@@ -51,16 +51,38 @@ Browser extensions are exempt from CORS for the hosts they are granted. `extensi
 small extension that makes the requests from the visitor's own browser, so no server is
 involved and sites see the visitor's own IP address.
 
+**Chrome, Edge and other Chromium browsers**
+
 1. Open `chrome://extensions`, switch on **Developer mode**, choose **Load unpacked** and
    select the `extension/` folder.
 2. Open the site and click the extension's toolbar button to enable it for that site (the
    badge shows **ON**). `http://localhost:8000` is enabled by default.
 3. Reload the page. Settings should say "Extension connected".
 
+**Firefox** (128 or later)
+
+1. Build the Firefox variant, which differs only in its manifest:
+
+   ```bash
+   npm run build:firefox
+   ```
+
+2. Open `about:debugging#/runtime/this-firefox`, choose **Load Temporary Add-on…** and select
+   `dist-extension/firefox/manifest.json`. A temporary add-on is removed when Firefox closes;
+   a permanent install needs the folder signed through addons.mozilla.org.
+3. Enable the site with the toolbar button and reload, as above. If the page still says the
+   extension is not detected, open `about:addons`, select the extension, and under
+   **Permissions** allow it to access all websites.
+
+Both variants are Manifest V3 and share `background.js` and `content.js`. Chromium rewrites
+request headers with `declarativeNetRequest` rules; Firefox uses blocking `webRequest`, which
+it still supports. The Chromium variant has been tested end to end. **The Firefox variant
+passes Mozilla's `web-ext lint` but has not been run in Firefox**, which was not available
+where this was built.
+
 The extension holds no yt-dlp logic and only serves origins you have enabled, because a
 page it serves can make requests to any site, including ones on your local network. It asks
-for access to all sites since yt-dlp supports thousands of them. It has been tested in
-Chromium; Chrome and Edge should behave the same, Firefox is untested.
+for access to all sites since yt-dlp supports thousands of them.
 
 How a request travels: yt-dlp (blocking, in a worker) → synchronous XHR to
 `<site>/__bridge/fetch` → the site's service worker (`sw.js`) holds that request open → page →

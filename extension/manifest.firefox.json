@@ -1,0 +1,20 @@
+{
+  "manifest_version": 3,
+  "name": "browser-yt-dlp bridge",
+  "version": "0.1.0",
+  "description": "Lets a browser-yt-dlp page you have enabled make cross-origin requests from your own browser, so no CORS proxy server is needed.",
+  "permissions": ["webRequest", "webRequestBlocking", "storage"],
+  "host_permissions": ["<all_urls>"],
+  "background": { "scripts": ["background.js"] },
+  "action": { "default_title": "Enable or disable browser-yt-dlp on this site" },
+  "content_scripts": [
+    { "matches": ["http://*/*", "https://*/*"], "js": ["content.js"], "run_at": "document_start" }
+  ],
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "browser-yt-dlp-bridge@browser-yt-dlp.invalid",
+      "strict_min_version": "128.0",
+      "data_collection_permissions": { "required": ["none"] }
+    }
+  }
+}
