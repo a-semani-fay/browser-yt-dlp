@@ -1,0 +1,8 @@
+name = "browser-yt-dlp-proxy"
+main = "worker.mjs"
+compatibility_date = "2025-01-01"
+
+[vars]
+# Comma-separated list of the sites allowed to use this relay.
+# Leave empty to allow any origin (not recommended for a public deployment).
+ALLOWED_ORIGINS = ""

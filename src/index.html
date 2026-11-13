@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>browser-yt-dlp</title>
+    <meta name="description" content="yt-dlp running entirely in your browser with WebAssembly" />
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <main>
+      <header>
+        <h1>browser-yt-dlp</h1>
+        <p class="lede">
+          yt-dlp and ffmpeg compiled to WebAssembly, running in this tab. Nothing is installed and
+          the extraction, downloading and merging all happen on your device.
+        </p>
+        <p id="status" class="status" role="status" data-state="loading">
+          <span class="dot" aria-hidden="true"></span><span id="status-text">Loading…</span>
+        </p>
+      </header>
+
+      <form id="form">
+        <label for="url">Video URL</label>
+        <div class="row">
+          <input id="url" type="url" required placeholder="https://www.youtube.com/watch?v=…" autocomplete="off" />
+          <button type="button" id="info-btn" class="secondary" disabled>Formats</button>
+          <button type="submit" id="download-btn" disabled>Download</button>
+        </div>
+
+        <div class="grid">
+          <div>
+            <label for="preset">Format</label>
+            <select id="preset">
+              <option value="bv*+ba/b">Best video + audio (merged with ffmpeg)</option>
+              <option value="b">Best single file (no merging)</option>
+              <option value="bv*[height<=720]+ba/b[height<=720]">Up to 720p</option>
+              <option value="ba/b">Audio only</option>
+              <option value="mp3">Audio only, converted to MP3</option>
+              <option value="custom">Custom format selector…</option>
+            </select>
+          </div>
+          <div id="custom-wrap" hidden>
+            <label for="custom">Selector (<code>-f</code>)</label>
+            <input id="custom" type="text" placeholder="137+140" spellcheck="false" />
+          </div>
+        </div>
+
+        <details id="settings">
+          <summary>Settings</summary>
+          <label for="mode">Network access</label>
+          <select id="mode">
+            <option value="extension">Companion browser extension (no server)</option>
+            <option value="proxy">CORS proxy</option>
+            <option value="direct">Direct (only sites that allow cross-origin requests)</option>
+          </select>
+          <p class="hint">
+            Browsers refuse to let a page read other sites unless those sites allow it, and almost no
+            video site does. Something outside the page has to make the requests: either the companion
+            extension in your own browser, or a relay server.
+          </p>
+          <p id="ext-status" class="hint"></p>
+          <div id="ext-install" class="install" hidden>
+            <a id="ext-link" class="button" href="#"></a>
+            <ol id="ext-steps" class="hint"></ol>
+            <p class="hint"><a id="ext-other" href="#"></a></p>
+          </div>
+          <div id="proxy-wrap" hidden>
+            <label for="proxy">CORS proxy URL</label>
+            <input id="proxy" type="text" placeholder="https://your-proxy.example.workers.dev/" spellcheck="false" />
+            <p class="hint">Deploy your own from <code>proxy/worker.mjs</code>.</p>
+          </div>
+          <label class="check"><input id="verbose" type="checkbox" /> Verbose log (<code>-v</code>)</label>
+        </details>
+      </form>
+
+      <section id="info" hidden>
+        <div class="media">
+          <img id="thumb" alt="" hidden />
+          <div>
+            <h2 id="title"></h2>
+            <p id="meta" class="muted"></p>
+          </div>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th>ID</th><th>Ext</th><th>Resolution</th><th>Video</th><th>Audio</th><th>Size</th><th>Note</th></tr>
+            </thead>
+            <tbody id="formats"></tbody>
+          </table>
+        </div>
+        <p class="hint">Click rows to build a custom selector: pick one video and one audio format to merge them.</p>
+      </section>
+
+      <section id="progress" hidden>
+        <div class="row between">
+          <span id="progress-label">Working…</span>
+          <button type="button" id="cancel-btn" class="secondary">Cancel</button>
+        </div>
+        <progress id="bar" max="100"></progress>
+      </section>
+
+      <section id="results" hidden>
+        <h2>Files</h2>
+        <ul id="files"></ul>
+      </section>
+
+      <section>
+        <div class="row between">
+          <h2>Log</h2>
+          <button type="button" id="clear-btn" class="secondary small">Clear</button>
+        </div>
+        <pre id="log" aria-live="polite"></pre>
+      </section>
+
+      <footer>
+        <p class="muted" id="versions"></p>
+        <p class="muted">Only download content you have the right to download.</p>
+      </footer>
+    </main>
+    <script type="module" src="app.js"></script>
+  </body>
+</html>
