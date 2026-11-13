@@ -209,7 +209,8 @@ self.onmessage = async ({ data }) => {
           ]);
         }
       }
-      post('result', { id, ok: result.ok, error: result.error });
+      const { files, ...summary } = result;
+      post('result', { id, ...summary });
     }
   } catch (err) {
     post('result', { id, ok: false, error: String(err?.message ?? err) });

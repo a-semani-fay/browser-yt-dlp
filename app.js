@@ -5,10 +5,8 @@ const els = {
   statusText: $('status-text'),
   form: $('form'),
   url: $('url'),
-  infoBtn: $('info-btn'),
   downloadBtn: $('download-btn'),
   preset: $('preset'),
-  customWrap: $('custom-wrap'),
   custom: $('custom'),
   proxy: $('proxy'),
   mode: $('mode'),
@@ -23,7 +21,11 @@ const els = {
   thumb: $('thumb'),
   title: $('title'),
   meta: $('meta'),
-  formats: $('formats'),
+  media: $('media'),
+  videoFormats: $('video-formats'),
+  audioFormats: $('audio-formats'),
+  pickerNotice: $('picker-notice'),
+  pickedBtn: $('picked-btn'),
   progress: $('progress'),
   progressLabel: $('progress-label'),
   bar: $('bar'),
@@ -207,9 +209,6 @@ async function initNetworkMode() {
   }
 }
 
-els.preset.addEventListener('change', () => {
-  els.customWrap.hidden = els.preset.value !== 'custom';
-});
 
 // --------------------------------------------------------------------- log
 
@@ -238,7 +237,8 @@ function setStatus(state, text) {
 }
 
 function refreshButtons() {
-  els.infoBtn.disabled = els.downloadBtn.disabled = !ready || busy;
+  els.downloadBtn.disabled = !ready || busy;
+  els.pickedBtn.disabled = !ready || busy || !els.custom.value.trim();
 }
 
 function startWorker() {
@@ -343,18 +343,61 @@ function baseOptions() {
   return { cors_proxy: proxies[els.mode.value], verbose: els.verbose.checked };
 }
 
-function downloadOptions() {
-  const options = baseOptions();
-  const preset = els.preset.value;
-  if (preset === 'mp3') {
-    options.format = 'ba/b';
-    options.postprocessors = [{ key: 'FFmpegExtractAudio', preferredcodec: 'mp3', preferredquality: '192' }];
-  } else if (preset === 'custom') {
-    options.format = els.custom.value.trim() || 'bv*+ba/b';
-  } else {
-    options.format = preset;
-  }
-  return options;
+// H.264 video and AAC audio in MP4 play practically everywhere; VP9, AV1 and
+// Opus do not (older phones, TVs, editors, car stereos). The compatible presets
+// therefore only accept those two codecs. "?" lets a format through when a site
+// does not say what its codec is. When nothing qualifies the user is shown the
+// formats that do exist and chooses (`ask_if_unavailable`), rather than
+// receiving a substitute they did not ask for.
+//
+// Dubbed audio needs no extra filter: yt-dlp ranks the original-language track
+// above every other one before it looks at quality, so "ba" is the original.
+const H264 = "[vcodec~=?'^(avc|h264)']";
+const AAC = "[acodec~=?'^(mp4a|aac)']";
+const compatible = (limit = '') => `bv*${H264}${limit}+ba${AAC}/b${H264}${AAC}${limit}`;
+
+const PRESETS = {
+  compatible: {
+    format: compatible(),
+    merge_output_format: 'mp4',
+    ask_if_unavailable: true,
+    hint: 'H.264 video and AAC audio in an MP4, which nearly every device and player can open. On YouTube this tops out at 1080p. Dubbed videos download with their original audio. If a video has no such formats you are shown what it does have.',
+  },
+  compatible720: {
+    format: compatible('[height<=720]'),
+    merge_output_format: 'mp4',
+    ask_if_unavailable: true,
+    hint: 'As above, limited to 720p for smaller files.',
+  },
+  best: {
+    format: 'bv*+ba/b',
+    hint: 'The highest resolution and bitrate on offer. Above 1080p this is usually VP9 or AV1 with Opus audio, which some devices and editors cannot play.',
+  },
+  audio: {
+    format: `ba${AAC}`,
+    ask_if_unavailable: true,
+    hint: 'The original audio track as AAC in an M4A file, without re-encoding.',
+  },
+  mp3: {
+    format: 'ba/b',
+    postprocessors: [{ key: 'FFmpegExtractAudio', preferredcodec: 'mp3', preferredquality: '192' }],
+    hint: 'The original audio track, re-encoded to a 192 kbit/s MP3 in your browser.',
+  },
+  advanced: {
+    hint: 'Lists every format the video has and lets you choose exactly which video and audio streams to download.',
+  },
+};
+
+function showPreset() {
+  $('preset-hint').textContent = PRESETS[els.preset.value].hint;
+  els.downloadBtn.textContent = els.preset.value === 'advanced' ? 'Show formats' : 'Download';
+}
+els.preset.addEventListener('change', showPreset);
+showPreset();
+
+function presetOptions() {
+  const { hint, ...preset } = PRESETS[els.preset.value];
+  return { ...baseOptions(), ...preset };
 }
 
 async function run(label, task) {
@@ -379,73 +422,161 @@ async function run(label, task) {
   }
 }
 
-// ----------------------------------------------------------------- actions
+// ----------------------------------------------------------- format picker
 
-function renderInfo(info) {
+const isCompatibleVideo = (f) => /^(avc|h264)/.test(f.vcodec ?? '');
+const isCompatibleAudio = (f) => /^(mp4a|aac)/.test(f.acodec ?? '');
+const hasVideo = (f) => f.vcodec && f.vcodec !== 'none';
+const hasAudio = (f) => f.acodec && f.acodec !== 'none';
+const kbps = (n) => (n ? `${Math.round(n)} kbit/s` : '');
+
+// The URL whose formats are on screen, and whether they came from a full
+// extraction that the download can reuse.
+let picker = { url: null, reusable: false };
+
+function formatRow(f, kind) {
+  const row = document.createElement('tr');
+  row.dataset.id = f.format_id;
+  row.dataset.kind = kind;
+  row.dataset.muxed = String(hasVideo(f) && hasAudio(f));
+  const compatibleRow =
+    kind === 'video' ? isCompatibleVideo(f) && (!hasAudio(f) || isCompatibleAudio(f)) : isCompatibleAudio(f);
+  const cells =
+    kind === 'video'
+      ? [
+          f.format_id,
+          [f.resolution, f.fps ? `${Math.round(f.fps)} fps` : '', f.dynamic_range === 'SDR' ? '' : f.dynamic_range].filter(Boolean).join(' · '),
+          hasAudio(f) ? `${f.vcodec} + ${f.acodec}` : f.vcodec,
+          f.ext,
+          kbps(f.tbr ?? f.vbr),
+          formatBytes(f.filesize ?? f.filesize_approx),
+        ]
+      : [f.format_id, f.language, f.acodec, f.ext, kbps(f.abr ?? f.tbr), formatBytes(f.filesize ?? f.filesize_approx)];
+  for (const value of cells) {
+    row.append(Object.assign(document.createElement('td'), { textContent: value ?? '' }));
+  }
+  const note = document.createElement('td');
+  const notes = [f.format_note, hasVideo(f) && hasAudio(f) ? 'includes audio' : ''].filter(Boolean).join(' · ');
+  if (compatibleRow) note.append(Object.assign(document.createElement('span'), { className: 'tag', textContent: 'compatible' }), ' ');
+  note.append(notes);
+  row.append(note);
+  return row;
+}
+
+function emptyRow(text) {
+  const row = document.createElement('tr');
+  row.append(Object.assign(document.createElement('td'), { colSpan: 7, className: 'empty', textContent: text }));
+  return row;
+}
+
+function syncSelector() {
+  const ids = ['video', 'audio']
+    .map((kind) => $(`${kind}-formats`).querySelector('tr[aria-selected="true"]')?.dataset.id)
+    .filter(Boolean);
+  els.custom.value = ids.join('+');
+  refreshButtons();
+}
+
+function selectRow(row) {
+  for (const other of row.parentElement.querySelectorAll('tr[aria-selected="true"]')) {
+    if (other !== row) other.removeAttribute('aria-selected');
+  }
+  row.toggleAttribute('aria-selected');
+  if (row.hasAttribute('aria-selected')) {
+    row.setAttribute('aria-selected', 'true');
+    // A format that already contains audio is a whole file; do not add a second track to it
+    const clash =
+      row.dataset.kind === 'audio'
+        ? els.videoFormats.querySelector('tr[aria-selected="true"][data-muxed="true"]')
+        : row.dataset.muxed === 'true' && els.audioFormats.querySelector('tr[aria-selected="true"]');
+    if (clash) clash.removeAttribute('aria-selected');
+  }
+  syncSelector();
+}
+
+for (const body of [els.videoFormats, els.audioFormats]) {
+  body.addEventListener('click', (event) => {
+    const row = event.target.closest('tr[data-id]');
+    if (row) selectRow(row);
+  });
+}
+els.custom.addEventListener('input', refreshButtons);
+
+// `info` is either a full extraction result or just {formats} (when a preset
+// found nothing suitable and yt-dlp handed back what exists).
+function showPicker(url, info, { notice = '', reusable = false } = {}) {
   // A playlist has no formats of its own; show the first entry's
-  const item = info.formats.length ? info : (info.entries?.[0] ?? info);
-  els.title.textContent = info.title ?? info.id ?? 'Untitled';
+  const item = info.formats?.length ? info : (info.entries?.[0] ?? info);
+  picker = { url, reusable: reusable && !info.entries };
+
+  els.media.hidden = !info.title;
+  els.title.textContent = info.title ?? '';
   els.meta.textContent = [
     info.uploader ?? info.channel,
     info.duration_string,
     info.extractor_key,
-    info.entries ? `${info.entries.length} entries` : null,
+    info.entries ? `${info.entries.length} entries; the choice below applies to each` : null,
   ].filter(Boolean).join(' · ');
   els.thumb.hidden = !item.thumbnail;
   if (item.thumbnail) els.thumb.src = item.thumbnail;
+  els.pickerNotice.hidden = !notice;
+  els.pickerNotice.textContent = notice;
 
-  els.formats.replaceChildren(
-    ...item.formats.map((f) => {
-      const row = document.createElement('tr');
-      row.dataset.id = f.format_id;
-      row.dataset.kind = f.vcodec && f.vcodec !== 'none' ? 'video' : 'audio';
-      const cells = [
-        f.format_id,
-        f.ext,
-        f.resolution,
-        f.vcodec === 'none' ? '' : f.vcodec,
-        f.acodec === 'none' ? '' : f.acodec,
-        formatBytes(f.filesize ?? f.filesize_approx),
-        f.format_note,
-      ];
-      for (const value of cells) {
-        const cell = document.createElement('td');
-        cell.textContent = value ?? '';
-        row.append(cell);
-      }
-      return row;
-    }),
-  );
+  // yt-dlp lists formats worst first; show the best at the top
+  const formats = [...(item.formats ?? [])].reverse().filter((f) => hasVideo(f) || hasAudio(f));
+  const videos = formats.filter(hasVideo);
+  const audios = formats.filter((f) => !hasVideo(f));
+  els.videoFormats.replaceChildren(...(videos.length ? videos.map((f) => formatRow(f, 'video')) : [emptyRow('No video formats')]));
+  els.audioFormats.replaceChildren(...(audios.length ? audios.map((f) => formatRow(f, 'audio')) : [emptyRow('No separate audio formats')]));
+
+  // Start from the closest thing to the compatible preset. Formats are already
+  // ordered by yt-dlp's preference, which puts the original audio track first.
+  const video = videos.find(isCompatibleVideo) ?? videos[0];
+  const audio = audios.find(isCompatibleAudio) ?? audios[0];
+  const rowFor = (f) => f && document.querySelector(`#info tr[data-id="${CSS.escape(f.format_id)}"]`);
+  if (video) selectRow(rowFor(video));
+  if (audio && !(video && hasAudio(video))) selectRow(rowFor(audio));
+  syncSelector();
+
+  els.preset.value = 'advanced';
+  showPreset();
   els.info.hidden = false;
+  els.info.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 }
 
-els.formats.addEventListener('click', (event) => {
-  const row = event.target.closest('tr');
-  if (!row) return;
-  const selected = row.getAttribute('aria-selected') === 'true';
-  // One video and one audio format at most, like "137+140"
-  for (const other of els.formats.querySelectorAll(`tr[data-kind="${row.dataset.kind}"]`)) {
-    other.removeAttribute('aria-selected');
+// ----------------------------------------------------------------- actions
+
+async function loadFormats(url) {
+  const result = await run('Looking up formats…', () => call('extract', url, baseOptions()));
+  if (result.ok) showPicker(url, result.info, { reusable: true });
+}
+
+async function download(url, options) {
+  const result = await run('Extracting…', () => call('download', url, options));
+  if (result.needs_choice) {
+    log('Nothing matches the selected preset; choose from the available formats.', 'warning');
+    showPicker(url, { formats: result.formats }, {
+      notice: 'This video has no format that fits the selected preset. Choose what to download instead.',
+    });
   }
-  if (!selected) row.setAttribute('aria-selected', 'true');
-
-  const picked = [...els.formats.querySelectorAll('tr[aria-selected="true"]')];
-  picked.sort((a) => (a.dataset.kind === 'video' ? -1 : 1));
-  els.preset.value = 'custom';
-  els.customWrap.hidden = false;
-  els.custom.value = picked.map((r) => r.dataset.id).join('+');
-});
-
-els.infoBtn.addEventListener('click', async () => {
-  if (!els.form.reportValidity()) return;
-  const result = await run('Extracting…', () => call('extract', els.url.value.trim(), baseOptions()));
-  if (result.ok) renderInfo(result.info);
-});
+}
 
 els.form.addEventListener('submit', async (event) => {
   event.preventDefault();
   if (!ready || busy) return;
-  await run('Extracting…', () => call('download', els.url.value.trim(), downloadOptions()));
+  const url = els.url.value.trim();
+  if (els.preset.value === 'advanced') await loadFormats(url);
+  else await download(url, presetOptions());
+});
+
+els.pickedBtn.addEventListener('click', async () => {
+  if (!ready || busy) return;
+  // The table belongs to the URL it was loaded for, even if the box was edited since
+  await download(picker.url, {
+    ...baseOptions(),
+    format: els.custom.value.trim(),
+    reuse_info: picker.reusable,
+  });
 });
 
 // yt-dlp blocks its worker while it runs, so the only way to stop it is to
@@ -454,28 +585,7 @@ els.cancelBtn.addEventListener('click', () => {
   worker.terminate();
   for (const resolve of pending.values()) resolve({ ok: false, error: 'Cancelled' });
   pending.clear();
-  async function start() {
-  // The worker's requests only pass through sw.js if the page was already
-  // controlled when the worker was created.
-  if (navigator.serviceWorker) {
-    try {
-      await navigator.serviceWorker.register('./sw.js');
-      await navigator.serviceWorker.ready;
-      if (!navigator.serviceWorker.controller) {
-        await new Promise((resolve) => {
-          navigator.serviceWorker.addEventListener('controllerchange', resolve, { once: true });
-          setTimeout(resolve, 3000);
-        });
-      }
-    } catch (err) {
-      log(`Service worker unavailable (${err.message}); extension mode will not work.`, 'warning');
-    }
-  }
-  await initNetworkMode();
   startWorker();
-}
-
-start();
 });
 
 async function start() {

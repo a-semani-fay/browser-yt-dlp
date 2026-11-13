@@ -13,6 +13,7 @@ so this file can also be driven from Node with a mock bridge.
 """
 from __future__ import annotations
 
+import copy
 import http.cookiejar
 import io
 import json
@@ -382,7 +383,8 @@ _INFO_KEYS = (
     'webpage_url', 'extractor_key', 'description', 'upload_date', 'view_count', '_type')
 _FORMAT_KEYS = (
     'format_id', 'format_note', 'ext', 'resolution', 'width', 'height', 'fps', 'vcodec',
-    'acodec', 'tbr', 'filesize', 'filesize_approx', 'protocol', 'language', 'format')
+    'acodec', 'tbr', 'abr', 'vbr', 'filesize', 'filesize_approx', 'protocol', 'language',
+    'language_preference', 'dynamic_range', 'format')
 
 
 def _summarize(info):
@@ -398,36 +400,91 @@ def _fail(e):
     return json.dumps({'ok': False, 'error': str(e) or type(e).__name__})
 
 
+class _NoMatchingFormat(Exception):
+    """The requested selector matched nothing; carries what there is instead."""
+
+    def __init__(self, formats):
+        super().__init__('No format matches the selected preset')
+        self.formats = formats
+
+
+def _ask_when_nothing_matches(ydl):
+    """Turn yt-dlp's "Requested format is not available" into a question.
+
+    With it, download() reports the formats that do exist so the page can let
+    the user choose, instead of failing or quietly substituting something else.
+    """
+    select = ydl.format_selector
+
+    def selector(ctx):
+        picked = list(select(ctx))
+        if not picked:
+            raise _NoMatchingFormat(ctx['formats'])
+        return picked
+
+    ydl.format_selector = selector
+
+
+# The most recent extract() result, so that choosing formats in the page and
+# then downloading them does not have to query the site a second time.
+_last_extraction = {'url': None, 'info': None}
+
+
 def extract(url, options_json):
     """Resolve a URL to metadata + available formats, without downloading."""
     try:
         opts = _base_options(json.loads(options_json))
         with yt_dlp.YoutubeDL(opts) as ydl:
-            info = ydl.sanitize_info(ydl.extract_info(url, download=False))
+            result = ydl.extract_info(url, download=False)
+            info = ydl.sanitize_info(result)
+            # Without the selection yt-dlp made for this run (requested_formats
+            # and friends), which would otherwise leak into the later download
+            _last_extraction.update(url=url, info=ydl.sanitize_info(result, remove_private_keys=True))
         return json.dumps({'ok': True, 'info': _summarize(info)}, default=str)
     except Exception as e:
         return _fail(e)
 
 
 def download(url, options_json):
-    """Download a URL. Returns the paths of the finished files in WORK_DIR."""
+    """Download a URL. Returns the paths of the finished files in WORK_DIR.
+
+    Two options are ours rather than yt-dlp's:
+      ask_if_unavailable  if the format selector matches nothing, return
+                          {'needs_choice': True, 'formats': [...]} instead of an error
+      reuse_info          download from the preceding extract() of the same URL
+    """
     try:
-        opts = _base_options(json.loads(options_json))
+        options = json.loads(options_json)
+        ask = options.pop('ask_if_unavailable', False)
+        reuse = options.pop('reuse_info', False)
+        opts = _base_options(options)
         opts['progress_hooks'] = [_progress_hook]
         opts['postprocessor_hooks'] = [_postprocessor_hook]
         for name in os.listdir(WORK_DIR):  # leftovers from an aborted run
             path = os.path.join(WORK_DIR, name)
             if os.path.isfile(path):
                 os.remove(path)
+
+        cached = _last_extraction['info'] if reuse and _last_extraction['url'] == url else None
         with yt_dlp.YoutubeDL(opts) as ydl:
-            code = ydl.download([url])
+            if ask:
+                _ask_when_nothing_matches(ydl)
+            if cached and cached.get('_type', 'video') == 'video':
+                ydl.process_ie_result(copy.deepcopy(cached), download=True)
+            else:
+                ydl.download([url])
         files = sorted(
             os.path.join(WORK_DIR, name) for name in os.listdir(WORK_DIR)
             if os.path.isfile(os.path.join(WORK_DIR, name))
             and not name.endswith(('.part', '.ytdl')))
         if not files:
             return json.dumps({'ok': False, 'error': 'yt-dlp finished without producing a file'})
-        return json.dumps({'ok': True, 'files': files, 'code': code})
+        return json.dumps({'ok': True, 'files': files})
+    except _NoMatchingFormat as e:
+        return json.dumps({
+            'ok': False, 'needs_choice': True,
+            'formats': [{k: f.get(k) for k in _FORMAT_KEYS} for f in e.formats],
+        }, default=str)
     except Exception as e:
         return _fail(e)
 

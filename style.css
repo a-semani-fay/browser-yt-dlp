@@ -32,6 +32,11 @@
   box-sizing: border-box;
 }
 
+/* Keep `hidden` working on elements that are given a display value below */
+[hidden] {
+  display: none !important;
+}
+
 body {
   margin: 0;
   background: var(--bg);
@@ -353,4 +358,36 @@ a.button {
 
 .install a:not(.button) {
   color: inherit;
+}
+
+h3 {
+  margin: 16px 0 0;
+  font-size: 0.875rem;
+}
+
+h3 + .table-wrap {
+  margin-top: 6px;
+  max-height: 260px;
+}
+
+.notice {
+  margin: 12px 0 0;
+  padding: 9px 12px;
+  font-size: 0.875rem;
+  border: 1px solid var(--warn);
+  border-radius: 7px;
+}
+
+.tag {
+  padding: 1px 6px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--ok);
+  border: 1px solid currentColor;
+  border-radius: 999px;
+}
+
+td.empty {
+  color: var(--muted);
+  cursor: default;
 }

@@ -3,6 +3,7 @@
 
 import assert from 'node:assert/strict';
 import { readFileSync, readdirSync } from 'node:fs';
+import vm from 'node:vm';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
@@ -145,4 +146,87 @@ solved = director.bulk_solve([JsChallengeRequest(JsChallengeType.N, NChallengeIn
   assert.equal(py(`len(calls)`), 1);
   assert.ok(py(`calls[0]`) > 10000, 'solver script was passed to the JS runtime');
   assert.deepEqual(py(`solved`), []);
+});
+
+// ---- format presets ---------------------------------------------------------
+
+// The presets live in app.js, which is a browser module; lift just that block out.
+const appSource = readFileSync(path.join(site, 'app.js'), 'utf8');
+const presetSource = appSource.slice(appSource.indexOf('const H264 ='), appSource.indexOf('function showPreset()'));
+const PRESETS = vm.runInNewContext(`${presetSource}; PRESETS`);
+
+const video = (id, vcodec, height, ext, tbr) => ({
+  format_id: id, url: `https://x.test/${id}`, ext, vcodec, acodec: 'none', height, width: (height * 16) / 9, tbr, protocol: 'https',
+});
+const audio = (id, acodec, ext, tbr, language, language_preference) => ({
+  format_id: id, url: `https://x.test/${id}`, ext, vcodec: 'none', acodec, tbr, abr: tbr, language, language_preference, protocol: 'https',
+});
+
+// What YouTube offers for an auto-dubbed video: the dub is flagged as the
+// viewer's default (5) and the original as original (10), in both codecs.
+const DUBBED = [
+  video('313', 'vp9', 2160, 'webm', 18000),
+  video('401', 'av01.0.12M.08', 2160, 'mp4', 12000),
+  video('248', 'vp9', 1080, 'webm', 2600),
+  video('137', 'avc1.640028', 1080, 'mp4', 4400),
+  video('136', 'avc1.4d401f', 720, 'mp4', 2300),
+  audio('251-en', 'opus', 'webm', 160, 'en', 5),
+  audio('251-ja', 'opus', 'webm', 130, 'ja', 10),
+  audio('140-en', 'mp4a.40.2', 'm4a', 192, 'en', 5),
+  audio('140-ja', 'mp4a.40.2', 'm4a', 128, 'ja', 10),
+  audio('140-es', 'mp4a.40.2', 'm4a', 129, 'es', -1),
+];
+
+function pick(presetName, formats) {
+  const { hint, ...options } = PRESETS[presetName];
+  globalThis.__case = JSON.stringify({ options, formats });
+  return JSON.parse(pyodide.runPython(`
+case = json.loads(js.__case)
+picker = yt_dlp.YoutubeDL(b._base_options({**case['options'], 'simulate': True, 'quiet': True}))
+info = picker.process_video_result(
+    {'id': 'vid', 'title': 't', 'extractor': 'test', 'extractor_key': 'Test', 'webpage_url': 'https://x.test/', 'formats': case['formats']},
+    download=False)
+json.dumps({'ids': [f['format_id'] for f in info.get('requested_formats') or [info]], 'ext': info['ext']})
+`));
+}
+
+test('compatible presets pick H.264 + AAC and the original audio track', () => {
+  assert.deepEqual(pick('compatible', DUBBED), { ids: ['137', '140-ja'], ext: 'mp4' });
+  assert.deepEqual(pick('compatible720', DUBBED), { ids: ['136', '140-ja'], ext: 'mp4' });
+});
+
+test('audio presets pick the original track', () => {
+  assert.deepEqual(pick('audio', DUBBED).ids, ['140-ja']);
+  assert.deepEqual(pick('mp3', DUBBED).ids, ['251-ja']);
+});
+
+test('the any-codec preset still prefers the original track', () => {
+  assert.deepEqual(pick('best', DUBBED).ids, ['401', '251-ja']);
+});
+
+test('compatible preset accepts a file whose codecs are unknown', () => {
+  const unknown = [{ format_id: 'http', url: 'https://x.test/v.mp4', ext: 'mp4', protocol: 'https' }];
+  assert.deepEqual(pick('compatible', unknown).ids, ['http']);
+});
+
+test('when nothing fits a preset, download() hands back the formats to choose from', () => {
+  // a site with nothing but VP9/Opus
+  const webmOnly = [video('v', 'vp9', 1080, 'webm', 2000), audio('a', 'opus', 'webm', 128)];
+  const { hint, ask_if_unavailable, ...options } = PRESETS.compatible;
+  assert.equal(ask_if_unavailable, true);
+  globalThis.__case = JSON.stringify({ options, formats: webmOnly });
+  const outcome = JSON.parse(pyodide.runPython(`
+case = json.loads(js.__case)
+asker = yt_dlp.YoutubeDL(b._base_options({**case['options'], 'simulate': True, 'quiet': True}))
+b._ask_when_nothing_matches(asker)
+try:
+    asker.process_video_result(
+        {'id': 'vid', 'title': 't', 'extractor': 'test', 'extractor_key': 'Test', 'webpage_url': 'https://x.test/', 'formats': case['formats']},
+        download=False)
+    outcome = 'selected something'
+except b._NoMatchingFormat as e:
+    outcome = sorted(f['format_id'] for f in e.formats)
+json.dumps(outcome)
+`));
+  assert.deepEqual(outcome, ['a', 'v']);
 });
