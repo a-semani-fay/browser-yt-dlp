@@ -65,17 +65,47 @@ els.proxy.addEventListener('change', () => store.set('proxy', els.proxy.value.tr
 let extSeq = 0;
 const extWaiting = new Map();
 
+// Messages to and from the extension are JSON text, with binary bodies as
+// base64. Firefox does not let the extension's content script touch objects
+// that belong to this page, so nothing structured may cross.
+function toBase64(buffer) {
+  const bytes = new Uint8Array(buffer);
+  if (bytes.toBase64) return bytes.toBase64();
+  let binary = '';
+  for (let i = 0; i < bytes.length; i += 0x8000) {
+    binary += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+  }
+  return btoa(binary);
+}
+
+function fromBase64(text) {
+  if (Uint8Array.fromBase64) return Uint8Array.fromBase64(text).buffer;
+  const binary = atob(text);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return bytes.buffer;
+}
+
 window.addEventListener('message', (event) => {
   if (event.source !== window || event.data?.source !== 'browser-yt-dlp-extension') return;
-  extWaiting.get(event.data.id)?.(event.data);
-  extWaiting.delete(event.data.id);
+  const reply = JSON.parse(event.data.json);
+  if (reply.bodyB64 !== undefined) {
+    reply.body = fromBase64(reply.bodyB64);
+    delete reply.bodyB64;
+  }
+  extWaiting.get(reply.id)?.(reply);
+  extWaiting.delete(reply.id);
 });
 
 function askExtension(type, request, timeoutMs) {
   return new Promise((resolve) => {
     const id = ++extSeq;
     extWaiting.set(id, resolve);
-    window.postMessage({ source: 'browser-yt-dlp-page', id, type, request }, location.origin);
+    const wire = request && { ...request, body: request.body ? toBase64(request.body) : null };
+    window.postMessage(
+      { source: 'browser-yt-dlp-page', json: JSON.stringify({ id, type, request: wire }) },
+      location.origin,
+    );
     setTimeout(() => {
       if (extWaiting.delete(id)) resolve(null);
     }, timeoutMs);
