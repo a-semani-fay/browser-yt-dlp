@@ -32,10 +32,10 @@
           <div>
             <label for="preset">Format</label>
             <select id="preset">
-              <option value="bv*+ba/b">Best video + audio (merged with ffmpeg)</option>
-              <option value="b">Best single file (no merging)</option>
-              <option value="bv*[height<=720]+ba/b[height<=720]">Up to 720p</option>
-              <option value="ba/b">Audio only</option>
+              <option value="compatible">Most compatible: MP4 (H.264 + AAC)</option>
+              <option value="compatible720">Most compatible, up to 720p</option>
+              <option value="best">Highest quality, any codec (may be VP9, AV1 or Opus)</option>
+              <option value="audio">Audio only: M4A (AAC)</option>
               <option value="mp3">Audio only, converted to MP3</option>
               <option value="custom">Custom format selector…</option>
             </select>
@@ -45,6 +45,8 @@
             <input id="custom" type="text" placeholder="137+140" spellcheck="false" />
           </div>
         </div>
+
+        <p class="hint" id="preset-hint"></p>
 
         <details id="settings">
           <summary>Settings</summary>

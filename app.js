@@ -343,17 +343,58 @@ function baseOptions() {
   return { cors_proxy: proxies[els.mode.value], verbose: els.verbose.checked };
 }
 
+// H.264 video and AAC audio in MP4 play practically everywhere; VP9, AV1 and
+// Opus do not (older phones, TVs, editors, car stereos). The compatible presets
+// therefore only accept those two codecs. "?" lets a format through when a site
+// does not say what its codec is, and the last alternative keeps sites that
+// have no H.264/AAC at all from failing outright.
+//
+// Dubbed audio needs no extra filter: yt-dlp ranks the original-language track
+// above every other one before it looks at quality, so "ba" is the original.
+const H264 = "[vcodec~=?'^(avc|h264)']";
+const AAC = "[acodec~=?'^(mp4a|aac)']";
+const compatible = (limit = '') =>
+  `bv*${H264}${limit}+ba${AAC}/b${H264}${AAC}${limit}/b[ext=mp4]${limit}/bv*${limit}+ba/b${limit}/b`;
+
+const PRESETS = {
+  compatible: {
+    format: compatible(),
+    merge_output_format: 'mp4',
+    hint: 'H.264 video and AAC audio in an MP4, which nearly every device and player can open. On YouTube this tops out at 1080p. Dubbed videos download with their original audio.',
+  },
+  compatible720: {
+    format: compatible('[height<=720]'),
+    merge_output_format: 'mp4',
+    hint: 'As above, limited to 720p for smaller files.',
+  },
+  best: {
+    format: 'bv*+ba/b',
+    hint: 'The highest resolution and bitrate on offer. Above 1080p this is usually VP9 or AV1 with Opus audio, which some devices and editors cannot play.',
+  },
+  audio: {
+    format: `ba${AAC}/ba/b`,
+    hint: 'The original audio track as AAC in an M4A file, without re-encoding.',
+  },
+  mp3: {
+    format: 'ba/b',
+    postprocessors: [{ key: 'FFmpegExtractAudio', preferredcodec: 'mp3', preferredquality: '192' }],
+    hint: 'The original audio track, re-encoded to a 192 kbit/s MP3 in your browser.',
+  },
+  custom: {
+    hint: 'A yt-dlp format selector, used exactly as typed. Click rows in the formats table to fill it in.',
+  },
+};
+
+function showPresetHint() {
+  $('preset-hint').textContent = PRESETS[els.preset.value].hint;
+}
+els.preset.addEventListener('change', showPresetHint);
+showPresetHint();
+
 function downloadOptions() {
-  const options = baseOptions();
-  const preset = els.preset.value;
-  if (preset === 'mp3') {
-    options.format = 'ba/b';
-    options.postprocessors = [{ key: 'FFmpegExtractAudio', preferredcodec: 'mp3', preferredquality: '192' }];
-  } else if (preset === 'custom') {
-    options.format = els.custom.value.trim() || 'bv*+ba/b';
-  } else {
-    options.format = preset;
-  }
+  const { hint, ...preset } = PRESETS[els.preset.value];
+  const options = { ...baseOptions(), ...preset };
+  if (els.preset.value === 'custom') options.format = els.custom.value.trim() || PRESETS.compatible.format;
   return options;
 }
 

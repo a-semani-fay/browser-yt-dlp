@@ -176,6 +176,25 @@ includes this relay at `/proxy` and uses your own connection.
 
 **Direct** mode uses neither and only works for sites that send CORS headers themselves.
 
+## Format presets
+
+The default preset aims for files that play anywhere rather than for the highest numbers:
+
+| Preset | What it downloads |
+| --- | --- |
+| Most compatible (default) | H.264 video + AAC audio, merged into an MP4. VP9, AV1 and Opus are excluded. On YouTube this tops out at 1080p. |
+| Most compatible, up to 720p | The same, capped at 720p |
+| Highest quality, any codec | yt-dlp's own default (`bv*+ba/b`); above 1080p usually VP9 or AV1 with Opus |
+| Audio only: M4A | The AAC track, not re-encoded |
+| Audio only, MP3 | Best audio, re-encoded to MP3 by ffmpeg.wasm |
+| Custom | Any yt-dlp format selector |
+
+For auto-dubbed videos every preset downloads the **original** audio track, not the dub
+YouTube would play by default: yt-dlp ranks the original-language track above all others
+before it compares quality. If a site offers no H.264/AAC at all, the compatible presets fall
+back to the best available formats instead of failing. The selectors are defined in `PRESETS`
+in `app.js` and covered by tests with a simulated dubbed video.
+
 ## How it works
 
 yt-dlp is synchronous code, so everything it calls must be synchronous too. It therefore runs
