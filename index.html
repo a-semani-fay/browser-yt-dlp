@@ -24,7 +24,6 @@
         <label for="url">Video URL</label>
         <div class="row">
           <input id="url" type="url" required placeholder="https://www.youtube.com/watch?v=…" autocomplete="off" />
-          <button type="button" id="info-btn" class="secondary" disabled>Formats</button>
           <button type="submit" id="download-btn" disabled>Download</button>
         </div>
 
@@ -37,12 +36,8 @@
               <option value="best">Highest quality, any codec (may be VP9, AV1 or Opus)</option>
               <option value="audio">Audio only: M4A (AAC)</option>
               <option value="mp3">Audio only, converted to MP3</option>
-              <option value="custom">Custom format selector…</option>
+              <option value="advanced">Advanced: choose the formats myself</option>
             </select>
-          </div>
-          <div id="custom-wrap" hidden>
-            <label for="custom">Selector (<code>-f</code>)</label>
-            <input id="custom" type="text" placeholder="137+140" spellcheck="false" />
           </div>
         </div>
 
@@ -77,22 +72,45 @@
       </form>
 
       <section id="info" hidden>
-        <div class="media">
+        <div class="media" id="media">
           <img id="thumb" alt="" hidden />
           <div>
             <h2 id="title"></h2>
             <p id="meta" class="muted"></p>
           </div>
         </div>
+        <p id="picker-notice" class="notice" hidden></p>
+
+        <h3>Video</h3>
         <div class="table-wrap">
           <table>
             <thead>
-              <tr><th>ID</th><th>Ext</th><th>Resolution</th><th>Video</th><th>Audio</th><th>Size</th><th>Note</th></tr>
+              <tr><th>ID</th><th>Resolution</th><th>Codec</th><th>Container</th><th>Bitrate</th><th>Size</th><th>Note</th></tr>
             </thead>
-            <tbody id="formats"></tbody>
+            <tbody id="video-formats"></tbody>
           </table>
         </div>
-        <p class="hint">Click rows to build a custom selector: pick one video and one audio format to merge them.</p>
+
+        <h3>Audio</h3>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th>ID</th><th>Language</th><th>Codec</th><th>Container</th><th>Bitrate</th><th>Size</th><th>Note</th></tr>
+            </thead>
+            <tbody id="audio-formats"></tbody>
+          </table>
+        </div>
+
+        <p class="hint">
+          Pick one row from each table to merge them, or one row alone. Rows marked
+          <span class="tag">compatible</span> are H.264 or AAC and play almost everywhere.
+        </p>
+        <label for="custom">Selector (<code>-f</code>)</label>
+        <div class="row">
+          <input id="custom" type="text" placeholder="137+140" spellcheck="false" />
+          <button type="button" id="picked-btn" disabled>Download selected</button>
+        </div>
+        <p class="hint">Filled in from your selection. Any yt-dlp format selector can be typed here instead.</p>
       </section>
 
       <section id="progress" hidden>

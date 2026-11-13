@@ -187,13 +187,22 @@ The default preset aims for files that play anywhere rather than for the highest
 | Highest quality, any codec | yt-dlp's own default (`bv*+ba/b`); above 1080p usually VP9 or AV1 with Opus |
 | Audio only: M4A | The AAC track, not re-encoded |
 | Audio only, MP3 | Best audio, re-encoded to MP3 by ffmpeg.wasm |
-| Custom | Any yt-dlp format selector |
+| Advanced | Lists every format and lets you choose the exact video and audio streams |
 
 For auto-dubbed videos every preset downloads the **original** audio track, not the dub
 YouTube would play by default: yt-dlp ranks the original-language track above all others
-before it compares quality. If a site offers no H.264/AAC at all, the compatible presets fall
-back to the best available formats instead of failing. The selectors are defined in `PRESETS`
-in `app.js` and covered by tests with a simulated dubbed video.
+before it compares quality.
+
+**Advanced** shows two tables, video and audio, best first, with H.264/AAC rows marked
+"compatible". The closest match to the compatible preset is preselected; pick one row from each
+table to merge them, or a single row on its own, then **Download selected**. The selection is
+written into a selector box that also accepts any yt-dlp format selector typed by hand. The
+download reuses the lookup that filled the tables instead of querying the site again.
+
+The same picker is the fallback. If a video has nothing that fits the chosen preset (for
+example no H.264), nothing is substituted silently: the picker opens with the formats that do
+exist and you decide. The selectors are defined in `PRESETS` in `app.js` and covered by tests
+with a simulated dubbed video.
 
 ## How it works
 

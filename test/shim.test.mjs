@@ -152,7 +152,7 @@ solved = director.bulk_solve([JsChallengeRequest(JsChallengeType.N, NChallengeIn
 
 // The presets live in app.js, which is a browser module; lift just that block out.
 const appSource = readFileSync(path.join(site, 'app.js'), 'utf8');
-const presetSource = appSource.slice(appSource.indexOf('const H264 ='), appSource.indexOf('function showPresetHint'));
+const presetSource = appSource.slice(appSource.indexOf('const H264 ='), appSource.indexOf('function showPreset()'));
 const PRESETS = vm.runInNewContext(`${presetSource}; PRESETS`);
 
 const video = (id, vcodec, height, ext, tbr) => ({
@@ -204,11 +204,29 @@ test('the any-codec preset still prefers the original track', () => {
   assert.deepEqual(pick('best', DUBBED).ids, ['401', '251-ja']);
 });
 
-test('compatible preset degrades instead of failing', () => {
-  // a site with one muxed file and no codec information
+test('compatible preset accepts a file whose codecs are unknown', () => {
   const unknown = [{ format_id: 'http', url: 'https://x.test/v.mp4', ext: 'mp4', protocol: 'https' }];
   assert.deepEqual(pick('compatible', unknown).ids, ['http']);
+});
+
+test('when nothing fits a preset, download() hands back the formats to choose from', () => {
   // a site with nothing but VP9/Opus
   const webmOnly = [video('v', 'vp9', 1080, 'webm', 2000), audio('a', 'opus', 'webm', 128)];
-  assert.deepEqual(pick('compatible', webmOnly).ids, ['v', 'a']);
+  const { hint, ask_if_unavailable, ...options } = PRESETS.compatible;
+  assert.equal(ask_if_unavailable, true);
+  globalThis.__case = JSON.stringify({ options, formats: webmOnly });
+  const outcome = JSON.parse(pyodide.runPython(`
+case = json.loads(js.__case)
+asker = yt_dlp.YoutubeDL(b._base_options({**case['options'], 'simulate': True, 'quiet': True}))
+b._ask_when_nothing_matches(asker)
+try:
+    asker.process_video_result(
+        {'id': 'vid', 'title': 't', 'extractor': 'test', 'extractor_key': 'Test', 'webpage_url': 'https://x.test/', 'formats': case['formats']},
+        download=False)
+    outcome = 'selected something'
+except b._NoMatchingFormat as e:
+    outcome = sorted(f['format_id'] for f in e.formats)
+json.dumps(outcome)
+`));
+  assert.deepEqual(outcome, ['a', 'v']);
 });
