@@ -67,7 +67,14 @@ npm run vendor
 
 That refreshes `vendor/` (Pyodide and ffmpeg.wasm from `node_modules`, the latest yt-dlp and
 its matching `yt-dlp-ejs` from PyPI) and `downloads/`; commit both. Set
-`YTDLP_VERSION=2026.10.26` to pin a release. `npm test` runs the Python shim against the real
+`YTDLP_VERSION=2026.10.26` to pin a release.
+
+`.github/workflows/update-vendor.yml` does this every Monday: it refreshes the files, runs the
+tests, and commits the result to `main` if anything changed. It can also be started by hand
+from the Actions tab. If `main` is a protected branch the push will be rejected; run the
+command yourself in that case.
+
+`npm test` runs the Python shim against the real
 yt-dlp under Pyodide in Node.
 
 ## Getting past CORS (read this before deploying)
