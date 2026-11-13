@@ -1,5 +1,5 @@
 // Runs the real Python shim and the real yt-dlp under Pyodide in Node, with a
-// fake browser bridge. Needs `npm run build` first (it reads dist/).
+// fake browser bridge, using the wheels committed in vendor/.
 
 import assert from 'node:assert/strict';
 import { readFileSync, readdirSync } from 'node:fs';
@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { loadPyodide } from 'pyodide';
 
-const dist = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../dist');
+const site = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 const data = Uint8Array.from({ length: 2500 }, (_, i) => (i * 7 + (i >> 8)) & 255);
 const requests = [];
@@ -69,10 +69,10 @@ globalThis.__ytdlpBridge = {
 };
 
 const pyodide = await loadPyodide();
-for (const wheel of readdirSync(path.join(dist, 'vendor/wheels'))) {
-  pyodide.unpackArchive(new Uint8Array(readFileSync(path.join(dist, 'vendor/wheels', wheel))), 'wheel');
+for (const wheel of readdirSync(path.join(site, 'vendor/wheels'))) {
+  pyodide.unpackArchive(new Uint8Array(readFileSync(path.join(site, 'vendor/wheels', wheel))), 'wheel');
 }
-pyodide.FS.writeFile('/home/pyodide/browser_ytdlp.py', readFileSync(path.join(dist, 'py/browser_ytdlp.py')));
+pyodide.FS.writeFile('/home/pyodide/browser_ytdlp.py', readFileSync(path.join(site, 'py/browser_ytdlp.py')));
 pyodide.runPython(`
 import json, js, yt_dlp
 import browser_ytdlp as b

@@ -14,7 +14,35 @@ is plain files that any static host can serve.
 Deno itself is not compiled to WebAssembly: its only job for yt-dlp is to execute JavaScript,
 and a browser already is a JavaScript runtime.
 
-## Quick start
+## Repository layout
+
+The repository root is the website. There is no build step: the page, the Python shim and the
+WebAssembly runtimes are all committed, so any static host can serve the repository as it is.
+
+```
+index.html, app.js, style.css   the page
+worker.js                       loads Pyodide + ffmpeg.wasm, exposes a "bridge" to Python
+sw.js                           holds the worker's blocking requests open for the extension
+py/browser_ytdlp.py             registers the browser backends with yt-dlp
+vendor/                         committed runtimes: Pyodide, ffmpeg.wasm, yt-dlp wheels (47 MB)
+downloads/                      committed zips of the companion extension, offered by the page
+extension/                      companion extension source
+proxy/worker.mjs                CORS relay (Cloudflare Worker, also used by the dev server)
+scripts/, test/                 maintenance scripts and tests (not used by the site)
+```
+
+## GitHub Pages
+
+Nothing needs to be configured beyond switching Pages on. With **Settings → Pages → Source:
+Deploy from a branch**, branch `main`, folder `/ (root)`, GitHub publishes the repository
+root, where `index.html` is. The empty `.nojekyll` file matters: without it GitHub runs
+Jekyll, which renders `README.md` as the home page and drops the `vendor/` folder.
+
+The site appears at `https://<user>.github.io/<repository>/` a minute or so after a push to
+`main`. No special headers (COOP/COEP) are required, because nothing here uses
+`SharedArrayBuffer`. Any other static host works the same way: serve the repository root.
+
+## Running locally
 
 ```bash
 npm install
@@ -24,13 +52,23 @@ npm install
 npm run dev
 ```
 
-Open <http://localhost:8000/>. The dev server serves `dist/` and a same-origin CORS proxy at
-`/proxy`, which the page uses automatically on localhost.
+Open <http://localhost:8000/>. The dev server serves the repository root and a same-origin
+CORS proxy at `/proxy`, which the page uses automatically on localhost. Any other static file
+server works too, without `npm install`, if you use the companion extension.
 
-`npm run build` assembles the deployable site in `dist/` (about 45 MB, most of it
-`ffmpeg-core.wasm`). Set `YTDLP_VERSION=2026.10.26` to pin yt-dlp; by default the build takes
-the latest release from PyPI together with the `yt-dlp-ejs` version that release requires.
-`npm test` runs the Python shim against the real yt-dlp under Pyodide in Node.
+## Updating yt-dlp
+
+yt-dlp needs frequent updates to keep working with the sites it supports. Because the wheels
+are committed, an update is a commit:
+
+```bash
+npm run vendor
+```
+
+That refreshes `vendor/` (Pyodide and ffmpeg.wasm from `node_modules`, the latest yt-dlp and
+its matching `yt-dlp-ejs` from PyPI) and `downloads/`; commit both. Set
+`YTDLP_VERSION=2026.10.26` to pin a release. `npm test` runs the Python shim against the real
+yt-dlp under Pyodide in Node.
 
 ## Getting past CORS (read this before deploying)
 
@@ -51,7 +89,7 @@ Browser extensions are exempt from CORS for the hosts they are granted. `extensi
 small extension that makes the requests from the visitor's own browser, so no server is
 involved and sites see the visitor's own IP address.
 
-The built site carries its own copy of the extension. When it is not installed, **Settings**
+The site carries its own copy of the extension (`downloads/`). When it is not installed, **Settings**
 shows a download button for the visitor's browser and the steps to follow, so nobody needs
 this repository to get it. How smooth that is depends on the browser:
 
@@ -76,8 +114,8 @@ Store and link to its listing.
 
 **Firefox** (128 or later)
 
-1. Click the download button on the page and unzip it (or run `npm run build:firefox`, which
-   writes the same files to `dist-extension/firefox/`).
+1. Click the download button on the page and unzip it (or run `npm run build:extension`,
+   which writes the same files to `dist-extension/firefox/`).
 2. Open `about:debugging#/runtime/this-firefox`, choose **Load Temporary Add-on…** and select
    `manifest.json` in that folder.
 3. Enable the site with the toolbar button and reload, as above. If the page still says the
@@ -86,9 +124,9 @@ Store and link to its listing.
 
 To give Firefox users the one-click install, have Mozilla sign the extension. Signing for
 self-distribution is free and does not list it publicly: submit
-`dist-extension/browser-yt-dlp-bridge-firefox.zip` at addons.mozilla.org as "on your own", or
+`downloads/browser-yt-dlp-bridge-firefox.zip` at addons.mozilla.org as "on your own", or
 run `npx web-ext sign --channel unlisted` in `dist-extension/firefox/` with your API keys.
-Put the signed file in `extension/signed/` as an `.xpi`; the next `npm run build` serves it
+Put the signed file in `extension/signed/` as an `.xpi`; run `npm run build:extension` and commit `downloads/`; the site then serves it
 and the page's button becomes **Install the extension**. Change the `gecko.id` in
 `extension/manifest.firefox.json` to one you own first.
 
@@ -131,23 +169,7 @@ includes this relay at `/proxy` and uses your own connection.
 
 **Direct** mode uses neither and only works for sites that send CORS headers themselves.
 
-## Deploying the site
-
-`dist/` can be uploaded to any static host. For GitHub Pages, `.github/workflows/pages.yml`
-builds and publishes it on every push to `main` and once a week (to pick up new yt-dlp
-releases); enable it under **Settings → Pages → Source: GitHub Actions**. No special headers
-(COOP/COEP) are required, because nothing here uses `SharedArrayBuffer`.
-
 ## How it works
-
-```
-index.html / app.js          UI; talks to the worker with postMessage
-worker.js                    loads Pyodide + ffmpeg.wasm, exposes a "bridge" to Python
-py/browser_ytdlp.py          registers the browser backends with yt-dlp
-sw.js                        holds the worker's blocking requests open for the extension
-extension/                   companion extension that makes the cross-origin requests
-proxy/worker.mjs             CORS relay (Cloudflare Worker, also used by the dev server)
-```
 
 yt-dlp is synchronous code, so everything it calls must be synchronous too. It therefore runs
 in a Web Worker where blocking is allowed, and `py/browser_ytdlp.py` plugs into yt-dlp's own

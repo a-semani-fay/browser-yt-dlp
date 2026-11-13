@@ -1,13 +1,15 @@
-// Packages the companion extension in dist-extension/:
+// Packages the companion extension:
 //
-//   firefox/                           unpacked Firefox variant (for about:debugging)
-//   browser-yt-dlp-bridge-chrome.zip   extension/ as Chromium loads it
-//   browser-yt-dlp-bridge-firefox.zip  the Firefox variant
+//   downloads/browser-yt-dlp-bridge-chrome.zip    extension/ as Chromium loads it
+//   downloads/browser-yt-dlp-bridge-firefox.zip   the Firefox variant
+//   downloads/browser-yt-dlp-bridge.xpi           copy of extension/signed/*.xpi, if any
+//   downloads/downloads.json                      what the page should offer
+//   dist-extension/firefox/                       unpacked Firefox variant (for about:debugging)
 //
 // Chromium loads extension/ as it is. Firefox needs a different manifest
 // (extension/manifest.firefox.json) under the name manifest.json.
 
-import { cp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { cp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import zlib from 'node:zlib';
@@ -15,6 +17,7 @@ import zlib from 'node:zlib';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const src = path.join(root, 'extension');
 const out = path.join(root, 'dist-extension');
+const downloads = path.join(root, 'downloads');
 const SCRIPTS = ['background.js', 'content.js'];
 
 // Just enough of the zip format for a handful of small text files
@@ -53,7 +56,9 @@ function zip(files) {
 }
 
 await rm(out, { recursive: true, force: true });
+await rm(downloads, { recursive: true, force: true });
 await mkdir(path.join(out, 'firefox'), { recursive: true });
+await mkdir(downloads, { recursive: true });
 
 const scripts = await Promise.all(SCRIPTS.map(async (name) => [name, await readFile(path.join(src, name))]));
 const chromeManifest = await readFile(path.join(src, 'manifest.json'));
@@ -62,6 +67,15 @@ const firefoxManifest = await readFile(path.join(src, 'manifest.firefox.json'));
 for (const name of SCRIPTS) await cp(path.join(src, name), path.join(out, 'firefox', name));
 await writeFile(path.join(out, 'firefox', 'manifest.json'), firefoxManifest);
 
-await writeFile(path.join(out, 'browser-yt-dlp-bridge-chrome.zip'), zip([['manifest.json', chromeManifest], ...scripts]));
-await writeFile(path.join(out, 'browser-yt-dlp-bridge-firefox.zip'), zip([['manifest.json', firefoxManifest], ...scripts]));
-console.log(`Built ${path.relative(root, out)}/`);
+const names = { chrome: 'browser-yt-dlp-bridge-chrome.zip', firefox: 'browser-yt-dlp-bridge-firefox.zip', firefoxSigned: null };
+await writeFile(path.join(downloads, names.chrome), zip([['manifest.json', chromeManifest], ...scripts]));
+await writeFile(path.join(downloads, names.firefox), zip([['manifest.json', firefoxManifest], ...scripts]));
+
+// A Mozilla-signed build (see README) lets Firefox install in one click
+const signed = (await readdir(path.join(src, 'signed')).catch(() => [])).find((f) => f.endsWith('.xpi'));
+if (signed) {
+  names.firefoxSigned = 'browser-yt-dlp-bridge.xpi';
+  await cp(path.join(src, 'signed', signed), path.join(downloads, names.firefoxSigned));
+}
+await writeFile(path.join(downloads, 'downloads.json'), JSON.stringify(names, null, 2) + '\n');
+console.log(`Built ${path.relative(root, downloads)}/`);
