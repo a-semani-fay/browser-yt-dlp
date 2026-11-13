@@ -23,6 +23,8 @@ const TYPES = {
   '.zip': 'application/zip',
   '.whl': 'application/zip',
   '.svg': 'image/svg+xml',
+  // Firefox only offers to install an add-on served with this type
+  '.xpi': 'application/x-xpinstall',
 };
 
 async function proxy(req, res) {

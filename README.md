@@ -51,34 +51,52 @@ Browser extensions are exempt from CORS for the hosts they are granted. `extensi
 small extension that makes the requests from the visitor's own browser, so no server is
 involved and sites see the visitor's own IP address.
 
+The built site carries its own copy of the extension. When it is not installed, **Settings**
+shows a download button for the visitor's browser and the steps to follow, so nobody needs
+this repository to get it. How smooth that is depends on the browser:
+
+| Browser | What a web page is allowed to do | Result |
+| --- | --- | --- |
+| Chrome, Edge | Offer a file. Installing from outside the Web Store is blocked. | Download the zip, unzip, **Load unpacked** in developer mode |
+| Firefox, unsigned | Offer a file. Unsigned add-ons cannot be installed permanently. | Download the zip, unzip, load as a temporary add-on (gone when Firefox closes) |
+| Firefox, signed | Install an `.xpi` straight from a link. | One click and a confirmation prompt |
+
 **Chrome, Edge and other Chromium browsers**
 
-1. Open `chrome://extensions`, switch on **Developer mode**, choose **Load unpacked** and
-   select the `extension/` folder.
-2. Open the site and click the extension's toolbar button to enable it for that site (the
+1. Click the download button on the page (or use the `extension/` folder of this repository)
+   and unzip it somewhere permanent.
+2. Open `chrome://extensions`, switch on **Developer mode**, choose **Load unpacked** and
+   select the folder.
+3. Open the site and click the extension's toolbar button to enable it for that site (the
    badge shows **ON**). `http://localhost:8000` is enabled by default.
-3. Reload the page. Settings should say "Extension connected".
+4. Reload the page. Settings should say "Extension connected".
+
+The only way to make this one click in Chrome is to publish the extension in the Chrome Web
+Store and link to its listing.
 
 **Firefox** (128 or later)
 
-1. Build the Firefox variant, which differs only in its manifest:
-
-   ```bash
-   npm run build:firefox
-   ```
-
+1. Click the download button on the page and unzip it (or run `npm run build:firefox`, which
+   writes the same files to `dist-extension/firefox/`).
 2. Open `about:debugging#/runtime/this-firefox`, choose **Load Temporary Add-on…** and select
-   `dist-extension/firefox/manifest.json`. A temporary add-on is removed when Firefox closes;
-   a permanent install needs the folder signed through addons.mozilla.org.
+   `manifest.json` in that folder.
 3. Enable the site with the toolbar button and reload, as above. If the page still says the
    extension is not detected, open `about:addons`, select the extension, and under
    **Permissions** allow it to access all websites.
+
+To give Firefox users the one-click install, have Mozilla sign the extension. Signing for
+self-distribution is free and does not list it publicly: submit
+`dist-extension/browser-yt-dlp-bridge-firefox.zip` at addons.mozilla.org as "on your own", or
+run `npx web-ext sign --channel unlisted` in `dist-extension/firefox/` with your API keys.
+Put the signed file in `extension/signed/` as an `.xpi`; the next `npm run build` serves it
+and the page's button becomes **Install the extension**. Change the `gecko.id` in
+`extension/manifest.firefox.json` to one you own first.
 
 Both variants are Manifest V3 and share `background.js` and `content.js`. Chromium rewrites
 request headers with `declarativeNetRequest` rules; Firefox uses blocking `webRequest`, which
 it still supports. The Chromium variant has been tested end to end. **The Firefox variant
 passes Mozilla's `web-ext lint` but has not been run in Firefox**, which was not available
-where this was built.
+where this was built; the signed one-click path is untested for the same reason.
 
 The extension holds no yt-dlp logic and only serves origins you have enabled, because a
 page it serves can make requests to any site, including ones on your local network. It asks

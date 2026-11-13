@@ -14,6 +14,10 @@ const els = {
   mode: $('mode'),
   proxyWrap: $('proxy-wrap'),
   extStatus: $('ext-status'),
+  extInstall: $('ext-install'),
+  extLink: $('ext-link'),
+  extSteps: $('ext-steps'),
+  extOther: $('ext-other'),
   verbose: $('verbose'),
   info: $('info'),
   thumb: $('thumb'),
@@ -90,15 +94,64 @@ navigator.serviceWorker?.addEventListener('message', async (event) => {
 const bridgeUrl = new URL('./__bridge/fetch', location.href).href;
 let extension = null;
 
+// ---- installing the extension --------------------------------------------
+// The site carries its own copy of the extension. Browsers decide how far a
+// page may go: Firefox installs a signed .xpi straight from a link, everything
+// else has to be unzipped and loaded by hand.
+
+const isFirefox = navigator.userAgent.includes('Firefox/');
+const STEPS = {
+  chrome: [
+    'Unzip the download into a folder you will keep.',
+    'Open chrome://extensions (or edge://extensions) and switch on Developer mode.',
+    'Choose "Load unpacked" and select the unzipped folder.',
+    'Come back to this tab, click the extension\'s toolbar button so its badge says ON, then reload.',
+  ],
+  firefox: [
+    'Unzip the download.',
+    'Open about:debugging#/runtime/this-firefox and choose "Load Temporary Add-on…".',
+    'Select manifest.json in the unzipped folder. Firefox removes temporary add-ons when it closes.',
+    'Come back to this tab, click the extension\'s toolbar button so its badge says ON, then reload.',
+  ],
+  firefoxSigned: [
+    'Approve the installation when Firefox asks.',
+    'Click the extension\'s toolbar button on this tab so its badge says ON, then reload.',
+  ],
+};
+
+let downloads;
+async function showInstall() {
+  try {
+    downloads ??= await (await fetch(new URL('./extension/downloads.json', location.href))).json();
+  } catch {
+    return; // site was built without the extension downloads
+  }
+  const kind = isFirefox ? (downloads.firefoxSigned ? 'firefoxSigned' : 'firefox') : 'chrome';
+  const otherKind = isFirefox ? 'chrome' : 'firefox';
+  els.extLink.href = `./extension/${downloads[kind]}`;
+  els.extLink.textContent =
+    kind === 'firefoxSigned' ? 'Install the extension' : `Download the extension for ${isFirefox ? 'Firefox' : 'Chrome / Edge'}`;
+  // A plain navigation is what makes Firefox offer to install an .xpi
+  els.extLink.toggleAttribute('download', kind !== 'firefoxSigned');
+  els.extSteps.replaceChildren(
+    ...STEPS[kind].map((text) => Object.assign(document.createElement('li'), { textContent: text })),
+  );
+  els.extOther.href = `./extension/${downloads[otherKind]}`;
+  els.extOther.textContent = `Download for ${isFirefox ? 'Chrome / Edge' : 'Firefox'} instead`;
+  els.extOther.setAttribute('download', '');
+  els.extInstall.hidden = false;
+}
+
 async function refreshExtension() {
   extension = await askExtension('ping', undefined, 400);
   els.proxyWrap.hidden = els.mode.value !== 'proxy';
   els.extStatus.hidden = els.mode.value !== 'extension';
+  els.extInstall.hidden = true;
+  if (els.mode.value === 'extension' && !extension) showInstall();
   if (!navigator.serviceWorker) {
     els.extStatus.textContent = 'This browser or context has no service workers, which extension mode needs.';
   } else if (!extension) {
-    els.extStatus.textContent =
-      'Extension not detected. Load the extension/ folder from the repository as an unpacked extension, then reload this page.';
+    els.extStatus.textContent = 'Extension not detected in this browser.';
   } else if (!extension.allowed) {
     els.extStatus.textContent =
       'Extension found, but this site is not enabled. Click the extension\'s toolbar button on this tab.';
