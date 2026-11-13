@@ -1,9 +1,9 @@
-// Assembles the static site in dist/:
-//   src/                 -> dist/
-//   pyodide (npm)        -> dist/vendor/pyodide/
-//   @ffmpeg/core (npm)   -> dist/vendor/ffmpeg/
-//   yt-dlp + yt-dlp-ejs  -> dist/vendor/wheels/   (pure-Python wheels from PyPI)
-//   companion extension  -> dist/extension/       (downloads offered by the page)
+// Refreshes the third-party files that are committed to the repository so the
+// site can be served straight from it, with no build step:
+//   pyodide (npm)        -> vendor/pyodide/
+//   @ffmpeg/core (npm)   -> vendor/ffmpeg/
+//   yt-dlp + yt-dlp-ejs  -> vendor/wheels/   (pure-Python wheels from PyPI)
+//   companion extension  -> downloads/       (zips offered by the page)
 //
 // YTDLP_VERSION=2026.10.26 pins yt-dlp; by default the latest release is used.
 
@@ -12,8 +12,7 @@ import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const dist = path.join(root, 'dist');
-const vendor = path.join(dist, 'vendor');
+const vendor = path.join(root, 'vendor');
 const modules = path.join(root, 'node_modules');
 
 async function pypi(name, version) {
@@ -34,8 +33,7 @@ async function downloadWheel(name, version) {
   return { meta, filename: file.filename };
 }
 
-await rm(dist, { recursive: true, force: true });
-await cp(path.join(root, 'src'), dist, { recursive: true });
+await rm(vendor, { recursive: true, force: true });
 await mkdir(path.join(vendor, 'wheels'), { recursive: true });
 
 console.log('Vendoring runtimes from node_modules');
@@ -56,26 +54,7 @@ const ejs = await downloadWheel('yt-dlp-ejs', ejsPin);
 
 await writeFile(
   path.join(vendor, 'manifest.json'),
-  JSON.stringify({ wheels: [ytdlp.filename, ejs.filename], built: new Date().toISOString() }, null, 2),
+  JSON.stringify({ wheels: [ytdlp.filename, ejs.filename] }, null, 2) + '\n',
 );
-// The page offers the companion extension for download. A signed .xpi placed in
-// extension/signed/ (see README) is served too, and lets Firefox install in one click.
 await import('./build-extension.mjs');
-const downloads = path.join(dist, 'extension');
-await mkdir(downloads, { recursive: true });
-for (const kind of ['chrome', 'firefox']) {
-  const name = `browser-yt-dlp-bridge-${kind}.zip`;
-  await cp(path.join(root, 'dist-extension', name), path.join(downloads, name));
-}
-const signed = (await readdir(path.join(root, 'extension/signed')).catch(() => [])).find((f) => f.endsWith('.xpi'));
-if (signed) await cp(path.join(root, 'extension/signed', signed), path.join(downloads, 'browser-yt-dlp-bridge.xpi'));
-await writeFile(
-  path.join(downloads, 'downloads.json'),
-  JSON.stringify({
-    chrome: 'browser-yt-dlp-bridge-chrome.zip',
-    firefox: 'browser-yt-dlp-bridge-firefox.zip',
-    firefoxSigned: signed ? 'browser-yt-dlp-bridge.xpi' : null,
-  }),
-);
-
-console.log(`Built ${path.relative(root, dist)}/`);
+console.log('Done. Commit vendor/ and downloads/ to publish the update.');

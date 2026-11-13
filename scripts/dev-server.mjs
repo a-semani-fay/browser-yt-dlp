@@ -1,4 +1,4 @@
-// Serves dist/ and a same-origin CORS proxy at /proxy, for local use.
+// Serves the site (the repository root) and a same-origin CORS proxy at /proxy, for local use.
 //   node scripts/dev-server.mjs [port]
 
 import { createServer } from 'node:http';
@@ -9,7 +9,7 @@ import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { handleProxy } from '../proxy/worker.mjs';
 
-const dist = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../dist');
+const siteRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const port = Number(process.argv[2] ?? process.env.PORT ?? 8000);
 
 const TYPES = {
@@ -47,8 +47,8 @@ async function proxy(req, res) {
 
 async function serveFile(req, res) {
   const { pathname } = new URL(req.url, 'http://localhost');
-  let file = path.join(dist, path.normalize(decodeURIComponent(pathname)));
-  if (!file.startsWith(dist)) return res.writeHead(403).end();
+  let file = path.join(siteRoot, path.normalize(decodeURIComponent(pathname)));
+  if (!file.startsWith(siteRoot)) return res.writeHead(403).end();
   try {
     if ((await stat(file)).isDirectory()) file = path.join(file, 'index.html');
     const { size } = await stat(file);

@@ -1,0 +1,36 @@
+name: Update yt-dlp
+
+# The site is served straight from the repository, so a new yt-dlp release only
+# reaches visitors once its wheel is committed. This does that weekly.
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 4 * * 1"
+
+permissions:
+  contents: write
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run vendor
+      - run: npm test
+      - name: Commit if anything changed
+        run: |
+          git add -A vendor downloads
+          if git diff --cached --quiet; then
+            echo "Already up to date"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "Update vendored yt-dlp ($(ls vendor/wheels | tr '\n' ' '))"
+          git push

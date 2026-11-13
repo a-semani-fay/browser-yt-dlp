@@ -122,13 +122,13 @@ const STEPS = {
 let downloads;
 async function showInstall() {
   try {
-    downloads ??= await (await fetch(new URL('./extension/downloads.json', location.href))).json();
+    downloads ??= await (await fetch(new URL('./downloads/downloads.json', location.href))).json();
   } catch {
-    return; // site was built without the extension downloads
+    return; // nothing to offer
   }
   const kind = isFirefox ? (downloads.firefoxSigned ? 'firefoxSigned' : 'firefox') : 'chrome';
   const otherKind = isFirefox ? 'chrome' : 'firefox';
-  els.extLink.href = `./extension/${downloads[kind]}`;
+  els.extLink.href = `./downloads/${downloads[kind]}`;
   els.extLink.textContent =
     kind === 'firefoxSigned' ? 'Install the extension' : `Download the extension for ${isFirefox ? 'Firefox' : 'Chrome / Edge'}`;
   // A plain navigation is what makes Firefox offer to install an .xpi
@@ -136,7 +136,7 @@ async function showInstall() {
   els.extSteps.replaceChildren(
     ...STEPS[kind].map((text) => Object.assign(document.createElement('li'), { textContent: text })),
   );
-  els.extOther.href = `./extension/${downloads[otherKind]}`;
+  els.extOther.href = `./downloads/${downloads[otherKind]}`;
   els.extOther.textContent = `Download for ${isFirefox ? 'Chrome / Edge' : 'Firefox'} instead`;
   els.extOther.setAttribute('download', '');
   els.extInstall.hidden = false;

@@ -5,10 +5,9 @@
   "description": "yt-dlp running entirely in the browser via WebAssembly (Pyodide + ffmpeg.wasm)",
   "type": "module",
   "scripts": {
-    "build": "node scripts/build.mjs",
-    "dev": "node scripts/build.mjs && node scripts/dev-server.mjs",
-    "build:firefox": "node scripts/build-extension.mjs",
-    "serve": "node scripts/dev-server.mjs",
+    "dev": "node scripts/dev-server.mjs",
+    "vendor": "node scripts/vendor.mjs",
+    "build:extension": "node scripts/build-extension.mjs",
     "test": "node --test test/shim.test.mjs"
   },
   "devDependencies": {
